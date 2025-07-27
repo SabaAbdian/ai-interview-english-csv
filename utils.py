@@ -2,6 +2,7 @@ import streamlit as st
 import hmac
 import time
 import os
+import csv
 
 
 # Password screen for dashboard (note: only very basic authentication!)
@@ -23,7 +24,6 @@ def check_password():
             st.secrets.passwords[st.session_state.username],
         ):
             st.session_state.password_correct = True
-
         else:
             st.session_state.password_correct = False
 
@@ -42,20 +42,13 @@ def check_password():
 
 def check_if_interview_completed(directory, username):
     """Check if interview transcript/time file exists which signals that interview was completed."""
-
-    # Test account has multiple interview attempts
     if username != "testaccount":
-
-        # Check if file exists
         try:
             with open(os.path.join(directory, f"{username}.txt"), "r") as _:
                 return True
-
         except FileNotFoundError:
             return False
-
     else:
-
         return False
 
 
@@ -87,3 +80,15 @@ def save_interview_data(
         d.write(
             f"Start time (UTC): {time.strftime('%d/%m/%Y %H:%M:%S', time.localtime(st.session_state.start_time))}\nInterview duration (minutes): {duration:.2f}"
         )
+
+
+def append_to_master_csv(username, role, message, master_csv_path="data/interview_master.csv"):
+    """Append a chat message to a central CSV file."""
+    os.makedirs("data", exist_ok=True)
+    if not os.path.exists(master_csv_path):
+        with open(master_csv_path, mode="w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["Timestamp", "Username", "Role", "Message"])
+    with open(master_csv_path, mode="a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), username, role, message])
