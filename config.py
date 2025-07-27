@@ -80,9 +80,10 @@ MAX_OUTPUT_TOKENS = 2048
 LOGINS = False  # Set to True to enable username/password authentication
 
 # === DATA FOLDER PATHS ===
-TRANSCRIPTS_DIRECTORY = "../data/transcripts/"
-TIMES_DIRECTORY = "../data/times/"
-BACKUPS_DIRECTORY = "../data/backups/"
+CSV_DIRECTORY = "data/csvs/"
+TRANSCRIPTS_DIRECTORY = "/data/transcripts/"
+TIMES_DIRECTORY = "/data/times/"
+BACKUPS_DIRECTORY = "/data/backups/"
 
 # === AVATARS IN STREAMLIT CHAT ===
 AVATAR_INTERVIEWER = "🎓"
