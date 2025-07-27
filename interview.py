@@ -10,11 +10,6 @@ from utils import (
 )
 import config
 
-# Google Drive integration
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-
 # Load API library
 if "gpt" in config.MODEL.lower():
     api = "openai"
@@ -42,6 +37,7 @@ else:
     st.session_state.username = "testaccount"
 
 # Create directories if they do not already exist
+os.makedirs("data", exist_ok=True)
 if not os.path.exists(config.TRANSCRIPTS_DIRECTORY):
     os.makedirs(config.TRANSCRIPTS_DIRECTORY)
 if not os.path.exists(config.TIMES_DIRECTORY):
@@ -49,34 +45,19 @@ if not os.path.exists(config.TIMES_DIRECTORY):
 if not os.path.exists(config.BACKUPS_DIRECTORY):
     os.makedirs(config.BACKUPS_DIRECTORY)
 
-# CSV file creation for saving interview data
-CSV_FILE_PATH = "interview_data.csv"
+# Define user-specific CSV path
+CSV_FILE_PATH = f"data/interview_data_{st.session_state.username}_{time.strftime('%Y_%m_%d_%H_%M_%S')}.csv"
+
+# Function to save interview data to CSV
 if not os.path.exists(CSV_FILE_PATH):
     with open(CSV_FILE_PATH, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Timestamp', 'Username', 'Role', 'Message'])
 
-# Upload CSV to Google Drive
-@st.cache_resource
-def get_gdrive_service():
-    credentials = service_account.Credentials.from_service_account_info(
-        st.secrets["gdrive"],
-        scopes=["https://www.googleapis.com/auth/drive.file"]
-    )
-    return build("drive", "v3", credentials=credentials)
-
-def upload_to_gdrive(filepath, filename):
-    service = get_gdrive_service()
-    file_metadata = {"name": filename, "mimeType": "application/vnd.google-apps.spreadsheet"}
-    media = MediaFileUpload(filepath, mimetype="text/csv")
-    service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-
-# Function to save interview data to CSV
 def save_to_csv(question, answer):
     with open(CSV_FILE_PATH, mode='a', newline='') as file:
         writer = csv.writer(file)
         writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), st.session_state.username, question, answer])
-    upload_to_gdrive(CSV_FILE_PATH, f"interview_data_{st.session_state.username}.csv")
 
 # Initialise session state
 if "interview_active" not in st.session_state:
@@ -196,11 +177,12 @@ if st.session_state.interview_active:
                         save_interview_data(st.session_state.username, config.TRANSCRIPTS_DIRECTORY, config.TIMES_DIRECTORY)
                         final_transcript_stored = check_if_interview_completed(config.TRANSCRIPTS_DIRECTORY, st.session_state.username)
                         time.sleep(0.1)
-if os.path.exists(CSV_FILE_PATH):
-    with open(CSV_FILE_PATH, "rb") as f:
-        st.download_button(
-            label="📥 Download Interview CSV",
-            data=f,
-            file_name=f"interview_data_{st.session_state.username}.csv",
-            mime="text/csv",
-        )
+
+# Optional: allow the owner to download CSV files from Streamlit UI
+if st.session_state.username == "admin":
+    st.sidebar.markdown("### Download all transcripts")
+    for root, dirs, files in os.walk("data"):
+        for file in files:
+            if file.endswith(".csv"):
+                with open(os.path.join(root, file), "rb") as f:
+                    st.sidebar.download_button(label=f"Download {file}", data=f, file_name=file, mime="text/csv")
