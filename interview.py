@@ -196,3 +196,11 @@ if st.session_state.interview_active:
                         save_interview_data(st.session_state.username, config.TRANSCRIPTS_DIRECTORY, config.TIMES_DIRECTORY)
                         final_transcript_stored = check_if_interview_completed(config.TRANSCRIPTS_DIRECTORY, st.session_state.username)
                         time.sleep(0.1)
+if os.path.exists(CSV_FILE_PATH):
+    with open(CSV_FILE_PATH, "rb") as f:
+        st.download_button(
+            label="📥 Download Interview CSV",
+            data=f,
+            file_name=f"interview_data_{st.session_state.username}.csv",
+            mime="text/csv",
+        )
