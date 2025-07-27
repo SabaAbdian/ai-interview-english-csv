@@ -90,12 +90,12 @@ def save_interview_data(
 
 
 # --- Append each message to admin master log ---
-def append_to_master_csv(username, role, message, master_csv_path="data/interview_master.csv"):
-    """Append each message (one row per message) to a central CSV log."""
-    os.makedirs(os.path.dirname(master_csv_path), exist_ok=True)
-    new_file = not os.path.exists(master_csv_path)
-    with open(master_csv_path, mode="a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        if new_file:
-            writer.writerow(["Timestamp", "Username", "Role", "Message"])
-        writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), username, role, message])
+def append_to_master_csv(username, role, content):
+    filename = os.path.join(config.CSV_DIRECTORY, f"{username}_interview.csv")
+    file_exists = os.path.isfile(filename)
+    
+    with open(filename, "a", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        if not file_exists:
+            writer.writerow(["timestamp", "username", "role", "message"])
+        writer.writerow([datetime.datetime.now().isoformat(), username, role, content])
