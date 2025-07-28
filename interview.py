@@ -1,167 +1,181 @@
+import config 
 import streamlit as st
 import time
 import os
-import csv
 from utils import (
     check_password,
     check_if_interview_completed,
     save_interview_data,
-    append_to_master_csv,
 )
-import config
 
 # Load API library
 if "gpt" in config.MODEL.lower():
-    from openai import OpenAI
     api = "openai"
+    from openai import OpenAI
 elif "claude" in config.MODEL.lower():
-    import anthropic
     api = "anthropic"
+    import anthropic
 else:
-    raise ValueError("Model must contain 'gpt' or 'claude'.")
+    raise ValueError("Model does not contain 'gpt' or 'claude'; unable to determine API.")
 
-# Page config
+# Set page title and icon
 st.set_page_config(page_title="Interview", page_icon=config.AVATAR_INTERVIEWER)
 
-# Auth
+# RTL support for Persian
+st.markdown("""
+    <style>
+    body { direction: rtl; text-align: right; font-family: "Vazir", sans-serif; }
+    .stChatMessage { direction: rtl !important; text-align: right !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+# Password login
 if config.LOGINS:
     pwd_correct, username = check_password()
     if not pwd_correct:
         st.stop()
-    st.session_state.username = username
+    else:
+        st.session_state.username = username
 else:
     st.session_state.username = "testaccount"
 
-# Create folders
-os.makedirs("data", exist_ok=True)
-for folder in [config.TRANSCRIPTS_DIRECTORY, config.TIMES_DIRECTORY, config.BACKUPS_DIRECTORY]:
-    os.makedirs(folder, exist_ok=True)
+# Ensure necessary folders exist
+for path in [config.TRANSCRIPTS_DIRECTORY, config.TIMES_DIRECTORY, config.BACKUPS_DIRECTORY]:
+    if not os.path.exists(path):
+        os.makedirs(path)
 
-# Session state setup
-st.session_state.setdefault("interview_active", True)
-st.session_state.setdefault("messages", [])
+# Initialize session state
+if "interview_active" not in st.session_state:
+    st.session_state.interview_active = True
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 if "start_time" not in st.session_state:
     st.session_state.start_time = time.time()
     st.session_state.start_time_file_names = time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime(st.session_state.start_time))
 
-# Exit if already completed
+# Check if already completed
 if check_if_interview_completed(config.TIMES_DIRECTORY, st.session_state.username) and not st.session_state.messages:
     st.session_state.interview_active = False
     st.markdown("Interview already completed.")
 
 # Quit button
-if st.session_state.interview_active:
-    with st.columns([0.85, 0.15])[1]:
-        if st.button("Quit", help="End the interview."):
-            st.session_state.interview_active = False
-            quit_msg = "You have cancelled the interview."
-            st.session_state.messages.append({"role": "assistant", "content": quit_msg})
-            append_to_master_csv(st.session_state.username, "assistant", quit_msg)
-            save_interview_data(st.session_state.username, config.TRANSCRIPTS_DIRECTORY, config.TIMES_DIRECTORY)
+col1, col2 = st.columns([0.85, 0.15])
+with col2:
+    if st.session_state.interview_active and st.button("Quit", help="End the interview."):
+        st.session_state.interview_active = False
+        quit_msg = "You have cancelled the interview."
+        st.session_state.messages.append({"role": "assistant", "content": quit_msg})
+        save_interview_data(
+            username=st.session_state.username,
+            transcripts_dir=config.TRANSCRIPTS_DIRECTORY,
+            times_dir=config.TIMES_DIRECTORY,
+        )
 
-# Display chat history
-for m in st.session_state.messages[1:]:
-    if not any(code in m["content"] for code in config.CLOSING_MESSAGES.keys()):
-        with st.chat_message(m["role"], avatar=config.AVATAR_INTERVIEWER if m["role"] == "assistant" else config.AVATAR_RESPONDENT):
-            st.markdown(m["content"])
+# Show existing conversation
+for message in st.session_state.messages:
+    if not any(code in message["content"] for code in config.CLOSING_MESSAGES.keys()):
+        with st.chat_message(message["role"], avatar=(config.AVATAR_INTERVIEWER if message["role"] == "assistant" else config.AVATAR_RESPONDENT)):
+            st.markdown(message["content"])
 
-# Load model
-api_kwargs = {
-    "messages": st.session_state.messages,
-    "model": config.MODEL,
-    "max_tokens": config.MAX_OUTPUT_TOKENS,
-}
-if config.TEMPERATURE:
-    api_kwargs["temperature"] = config.TEMPERATURE
-
+# Load model client
 if api == "openai":
     client = OpenAI(api_key=st.secrets["API_KEY_OPENAI"])
-    api_kwargs["stream"] = True
+    api_kwargs = {
+        "model": config.MODEL,
+        "messages": st.session_state.messages,
+        "max_tokens": config.MAX_OUTPUT_TOKENS,
+        "stream": True,
+    }
+    if config.TEMPERATURE is not None:
+        api_kwargs["temperature"] = config.TEMPERATURE
+
 elif api == "anthropic":
     client = anthropic.Anthropic(api_key=st.secrets["API_KEY_ANTHROPIC"])
-    api_kwargs["system"] = config.SYSTEM_PROMPT
+    api_kwargs = {
+        "system": config.SYSTEM_PROMPT,
+        "messages": st.session_state.messages,
+        "model": config.MODEL,
+        "max_tokens": config.MAX_OUTPUT_TOKENS,
+    }
 
-# First assistant message
+# Start interview
 if not st.session_state.messages:
     if api == "openai":
-        st.session_state.messages.append({"role": "system", "content": config.SYSTEM_PROMPT})
         with st.chat_message("assistant", avatar=config.AVATAR_INTERVIEWER):
             stream = client.chat.completions.create(**api_kwargs)
-            first_reply = st.write_stream(stream)
-    else:  # Claude
+            first_msg = st.write_stream(stream)
+        st.session_state.messages.append({"role": "assistant", "content": first_msg})
+
+    elif api == "anthropic":
         st.session_state.messages.append({"role": "user", "content": "Hi"})
         with st.chat_message("assistant", avatar=config.AVATAR_INTERVIEWER):
-            first_reply = ""
             placeholder = st.empty()
+            msg = ""
             with client.messages.stream(**api_kwargs) as stream:
                 for delta in stream.text_stream:
-                    first_reply += delta
-                    placeholder.markdown(first_reply + "▌")
-            placeholder.markdown(first_reply)
+                    if delta: msg += delta
+                    placeholder.markdown(f'<div style="direction: rtl; text-align: right;">{msg}▌</div>', unsafe_allow_html=True)
+            placeholder.markdown(f'<div style="direction: rtl; text-align: right;">{msg}</div>', unsafe_allow_html=True)
+        st.session_state.messages.append({"role": "assistant", "content": msg})
 
-    st.session_state.messages.append({"role": "assistant", "content": first_reply})
-    append_to_master_csv(st.session_state.username, "assistant", first_reply)
-    save_interview_data(st.session_state.username, config.BACKUPS_DIRECTORY, config.BACKUPS_DIRECTORY,
-                        f"_transcript_{st.session_state.start_time_file_names}",
-                        f"_time_{st.session_state.start_time_file_names}")
+    save_interview_data(
+        username=st.session_state.username,
+        transcripts_dir=config.BACKUPS_DIRECTORY,
+        times_dir=config.BACKUPS_DIRECTORY,
+    )
 
-# Chat interaction
+# Chat loop
 if st.session_state.interview_active:
-    if user_msg := st.chat_input("Your message here"):
-        st.session_state.messages.append({"role": "user", "content": user_msg})
-        append_to_master_csv(st.session_state.username, "user", user_msg)
+    if user_input := st.chat_input("Your message here"):
+        st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user", avatar=config.AVATAR_RESPONDENT):
-            st.markdown(user_msg)
+            st.markdown(user_input)
 
         with st.chat_message("assistant", avatar=config.AVATAR_INTERVIEWER):
             placeholder = st.empty()
             reply = ""
+
             if api == "openai":
                 stream = client.chat.completions.create(**api_kwargs)
-                for chunk in stream:
-                    delta = chunk.choices[0].delta.content
-                    if delta:
-                        reply += delta
-                        placeholder.markdown(reply + "▌")
-            else:  # Claude
+                for m in stream:
+                    delta = m.choices[0].delta.content
+                    if delta: reply += delta
+                    if len(reply) > 5: placeholder.markdown(reply + "▌")
+                    if any(code in reply for code in config.CLOSING_MESSAGES): break
+
+            elif api == "anthropic":
                 with client.messages.stream(**api_kwargs) as stream:
                     for delta in stream.text_stream:
-                        reply += delta
-                        placeholder.markdown(reply + "▌")
+                        if delta: reply += delta
+                        if len(reply) > 5: placeholder.markdown(reply + "▌")
+                        if any(code in reply for code in config.CLOSING_MESSAGES): break
 
-            placeholder.markdown(reply)
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-            append_to_master_csv(st.session_state.username, "assistant", reply)
-
-            # Auto-save partial transcript
-            save_interview_data(st.session_state.username, config.BACKUPS_DIRECTORY, config.BACKUPS_DIRECTORY,
-                                f"_transcript_{st.session_state.start_time_file_names}",
-                                f"_time_{st.session_state.start_time_file_names}")
-
-            # Final closing check
-            for code in config.CLOSING_MESSAGES.keys():
-                if code in reply:
-                    st.session_state.interview_active = False
-                    closing = config.CLOSING_MESSAGES[code]
-                    st.session_state.messages.append({"role": "assistant", "content": closing})
-                    st.markdown(closing)
-                    append_to_master_csv(st.session_state.username, "assistant", closing)
-                    final_saved = False
-                    while not final_saved:
-                        save_interview_data(st.session_state.username, config.TRANSCRIPTS_DIRECTORY, config.TIMES_DIRECTORY)
-                        final_saved = check_if_interview_completed(config.TRANSCRIPTS_DIRECTORY, st.session_state.username)
-                        time.sleep(0.1)
-
-# Admin download section
-if st.session_state.username == "admin":
-    st.sidebar.markdown("### 🔐 Admin Downloads")
-    for root, _, files in os.walk("data"):
-        for file in files:
-            if file.endswith(".csv"):
-                with open(os.path.join(root, file), "rb") as f:
-                    st.sidebar.download_button(
-                        label=f"Download {file}",
-                        data=f,
-                        file_name=file,
-                        mime="text/csv"
+            if not any(code in reply for code in config.CLOSING_MESSAGES):
+                placeholder.markdown(reply)
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+                try:
+                    save_interview_data(
+                        username=st.session_state.username,
+                        transcripts_dir=config.TRANSCRIPTS_DIRECTORY,
+                        times_dir=config.TIMES_DIRECTORY,
                     )
+                except Exception as e:
+                    print("⚠️ Failed to save data:", e)
+
+            for code in config.CLOSING_MESSAGES:
+                if code in reply:
+                    st.session_state.messages.append({"role": "assistant", "content": reply})
+                    st.session_state.interview_active = False
+                    closing_msg = config.CLOSING_MESSAGES[code]
+                    st.markdown(closing_msg)
+                    st.session_state.messages.append({"role": "assistant", "content": closing_msg})
+
+                    final_transcript_stored = False
+                    while not final_transcript_stored:
+                        save_interview_data(
+                            username=st.session_state.username,
+                            transcripts_dir=config.TRANSCRIPTS_DIRECTORY,
+                            times_dir=config.TIMES_DIRECTORY,
+                        )
+                        final_transcript_stored = check_if_interview_completed(config.TRANSCRIPTS_DIRECTORY, st.session_state.username)
+                        time.sleep(0.1)
